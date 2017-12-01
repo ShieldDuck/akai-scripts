@@ -1,41 +1,60 @@
-
 import pyaudio
 import wave
 import time
-import sys
 
-if len(sys.argv) < 2:
-    print("Plays a wave file.\n\nUsage: %s filename.wav" % sys.argv[0])
-    sys.exit(-1)
+CHUNK_SIZE = 4096
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+RATE = 44100
+RECORD_SECONDS = 5
+WAVE_OUTPUT_FILENAME = "output.wav"
 
-wf = wave.open(sys.argv[1], 'rb')
+import threading
 
-# instantiate PyAudio (1)
-p = pyaudio.PyAudio()
+lock = threading.Lock()
+frames = []
+audio_buffer = {}
 
-# define callback (2)
-def callback(in_data, frame_count, time_info, status):
-    data = wf.readframes(frame_count)
-    return (data, pyaudio.paContinue)
+def audio_input_callback(in_data, frame_count, time_info, status):
+    if not "local" in audio_buffer:
+        audio_buffer["local"] = b""
+    audio_buffer["local"] += in_data
+    return (b"", pyaudio.paContinue)
 
-# open stream using callback (3)
-stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
-                channels=wf.getnchannels(),
-                rate=wf.getframerate(),
-                output=True,
-                stream_callback=callback)
+def audio_output_callback(in_data, frame_count, time_info, status):
+    requested_size = frame_count * CHANNELS * 2
+    if "local" in audio_buffer and len(audio_buffer["local"]) >= requested_size:
+        value = audio_buffer["local"][:requested_size]
+        audio_buffer["local"] = audio_buffer["local"][requested_size:]
+    else:
+        value = b"\x00" * requested_size
+    return (value, pyaudio.paContinue)
 
-# start the stream (4)
-stream.start_stream()
+if __name__ == "__main__":
+        print("starting pyaudio")
+        audio = pyaudio.PyAudio()
+        print("started pyaudio")
+        input_device = 0
+        output_device = 0
 
-# wait for stream to finish (5)
-while stream.is_active():
-    time.sleep(0.1)
+        audio_info = audio.get_host_api_info_by_index(0)
+        for i in range(0, audio_info['deviceCount']):
+            device = audio.get_device_info_by_host_api_device_index(0, i)
+            print(device)
+            if device['maxInputChannels'] > 0 and device['name']  == u"pulse":
+                input_device = i
+            if device['maxOutputChannels'] > 0 and device['name']  == u"pulse":
+                output_device = i
 
-# stop stream (6)
-stream.stop_stream()
-stream.close()
-wf.close()
+        input_stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True,
+            input_device_index=input_device, frames_per_buffer=CHUNK_SIZE, stream_callback=audio_input_callback)
+        output_stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, output=True,
+            output_device_index=output_device, frames_per_buffer=CHUNK_SIZE, stream_callback=audio_output_callback)
+        input_stream.start_stream()
+        output_stream.start_stream()
 
-# close PyAudio (7)
-p.terminate()
+        while input_stream.is_active() and output_stream.is_active():
+            time.sleep(0.1)
+
+        input_stream.stop_stream()
+        output_stream.stop_stream()
