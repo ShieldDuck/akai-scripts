@@ -23,10 +23,10 @@ struct t_hook *weechat_audio_hook = NULL;
 ALCcontext *audioContext = NULL;
 ALCdevice *audioDevice = NULL;
 ALCdevice *inputDevice = NULL;
-ALuint buffers[BUFFER_COUNT], source[1];
+ALuint buffers[BUFFER_COUNT], source;
 int buffersActive[BUFFER_COUNT];
 short buffer[DOUBLE_BUFFER_SIZE];
-ALenum errorCode=0;
+ALenum errorCode = 0;
 int bufferState = 0;
 
 #define NEXT_BUFFER_STATE (bufferState + 1) % BUFFER_COUNT
@@ -54,7 +54,7 @@ void init_audio()
     alGenBuffers(BUFFER_COUNT, buffers);
     check_al_error();
 
-    alGenSources(1, source);
+    alGenSources(1, &source);
     check_al_error();
 
     for (int i = 0; i < BUFFER_COUNT; ++i)
@@ -66,31 +66,41 @@ void init_audio()
 
 void end_audio()
 {
+    alcCaptureStop(inputDevice);
+    alcCaptureCloseDevice(inputDevice);
 
+    alSourceStopv(1, &source);
+
+    alDeleteSources(1, &source);
+    alDeleteBuffers(BUFFER_COUNT, buffers);
+
+    alcMakeContextCurrent(NULL);
+    alcDestroyContext(audioContext);
+    alcCloseDevice(audioDevice);
 }
 
 
 int
 timer_audio_cb(const void *pointer, void *data, int remaining_calls)
 {
-    weechat_printf(NULL, "doing audio");
     bufferState = NEXT_BUFFER_STATE;
+    weechat_printf(NULL, "doing audio buffer: %d", bufferState);
     if (buffersActive[bufferState] == 1)
     {
-        alSourceUnqueueBuffers(source[0], 1, &buffers[bufferState]);
+        alSourceUnqueueBuffers(source, 1, &buffers[bufferState]);
         buffersActive[bufferState] = 0;
     }
 
     alcCaptureSamples(inputDevice, buffer, BUFFER_SIZE);
 
     alBufferData(buffers[bufferState], AL_FORMAT_MONO16, buffer, BUFFER_SIZE * sizeof(short), FREQUENCY);
-    alSourceQueueBuffers(source[0], 1, &buffers[bufferState]);
+    alSourceQueueBuffers(source, 1, &buffers[bufferState]);
     buffersActive[bufferState] = 1;
 
     ALint sourceState = 0;
-    alGetSourcei(source[0],AL_SOURCE_STATE,&sourceState);
-    if (sourceState!=AL_PLAYING) {
-        alSourcePlay(source[0]);
+    alGetSourcei(source, AL_SOURCE_STATE, &sourceState);
+    if (sourceState != AL_PLAYING) {
+        alSourcePlay(source);
     }
 
     time_t date = time(NULL);
