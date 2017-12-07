@@ -1,5 +1,14 @@
 #include <stdlib.h>
 #include <weechat/weechat-plugin.h>
+#include <AL/al.h>
+#include <AL/alc.h>
+
+#define FREQUENCY 44100
+#define FRAMES_PER_SEC 20
+#define BUFFER_SIZE FREQUENCY/FRAMES_PER_SEC
+#define DOUBLE_BUFFER_SIZE FREQUENCY/FRAMES_PER_SEC*2
+#define BUFFER_COUNT 4
+#define NEXT_BUFFER_STATE (bufferState + 1) % BUFFER_COUNT
 
 WEECHAT_PLUGIN_NAME("akai-audio");
 WEECHAT_PLUGIN_DESCRIPTION("Audio plugin for Weechat");
@@ -10,16 +19,6 @@ WEECHAT_PLUGIN_LICENSE("GPL3");
 struct t_weechat_plugin *weechat_plugin = NULL;
 struct t_hook *weechat_audio_hook = NULL;
 
-
-#include <AL/al.h>
-#include <AL/alc.h>
-
-#define FREQUENCY 44100
-#define FRAMES_PER_SEC 20
-#define BUFFER_SIZE FREQUENCY/FRAMES_PER_SEC
-#define DOUBLE_BUFFER_SIZE FREQUENCY/FRAMES_PER_SEC*2
-#define BUFFER_COUNT 4
-
 ALCcontext *audioContext = NULL;
 ALCdevice *audioDevice = NULL;
 ALCdevice *inputDevice = NULL;
@@ -28,8 +27,6 @@ int buffersActive[BUFFER_COUNT];
 short buffer[DOUBLE_BUFFER_SIZE];
 ALenum errorCode = 0;
 int bufferState = 0;
-
-#define NEXT_BUFFER_STATE (bufferState + 1) % BUFFER_COUNT
 
 
 void openal_error(char *location)
@@ -56,12 +53,12 @@ void openal_error(char *location)
 
 void init_audio()
 {
-    audioDevice = alcOpenDevice(NULL); // Request default audio device
-    audioContext = alcCreateContext(audioDevice,NULL); // Create the audio context
+    audioDevice = alcOpenDevice(NULL);
+    audioContext = alcCreateContext(audioDevice,NULL);
     alcMakeContextCurrent(audioContext);
     openal_error("set context");
     inputDevice = alcCaptureOpenDevice(NULL,FREQUENCY,AL_FORMAT_MONO16,BUFFER_SIZE);
-    alcCaptureStart(inputDevice); // Begin capturing
+    alcCaptureStart(inputDevice);
     openal_error("start capture");
 
     alGenBuffers(BUFFER_COUNT, buffers);
@@ -143,7 +140,6 @@ command_double_cb (const void *pointer, void *data,
                    struct t_gui_buffer *buffer,
                    int argc, char **argv, char **argv_eol)
 {
-    /* make C compiler happy */
     (void) data;
     (void) buffer;
     (void) argv;
@@ -183,7 +179,6 @@ weechat_plugin_init (struct t_weechat_plugin *plugin,
 int
 weechat_plugin_end (struct t_weechat_plugin *plugin)
 {
-    /* make C compiler happy */
     (void) plugin;
 
     end_audio();
