@@ -15,10 +15,10 @@ struct t_hook *weechat_audio_hook = NULL;
 #include <AL/alc.h>
 
 #define FREQUENCY 44100
-#define FRAMES_PER_SEC 10
+#define FRAMES_PER_SEC 20
 #define BUFFER_SIZE FREQUENCY/FRAMES_PER_SEC
 #define DOUBLE_BUFFER_SIZE FREQUENCY/FRAMES_PER_SEC*2
-#define BUFFER_COUNT 2
+#define BUFFER_COUNT 4
 
 ALCcontext *audioContext = NULL;
 ALCdevice *audioDevice = NULL;
@@ -32,30 +32,43 @@ int bufferState = 0;
 #define NEXT_BUFFER_STATE (bufferState + 1) % BUFFER_COUNT
 
 
-int check_al_error()
+void openal_error(char *location)
 {
-    errorCode = alGetError();
-    return 0;
+    ALenum error = alGetError();
+    if (error == AL_INVALID_NAME)
+    {
+        weechat_printf(NULL, "%s: invalid name", location);
+    }
+    else if (error == AL_INVALID_ENUM)
+    {
+        weechat_printf(NULL, "%s: invalid enum", location);
+    }
+    else if (error == AL_INVALID_OPERATION)
+    {
+        weechat_printf(NULL, "%s: invalid operation", location);
+    }
+    else if (error == AL_OUT_OF_MEMORY)
+    {
+        weechat_printf(NULL, "%s: out of memory", location);
+    }
 }
 
 
 void init_audio()
 {
     audioDevice = alcOpenDevice(NULL); // Request default audio device
-    errorCode = alcGetError(audioDevice);
     audioContext = alcCreateContext(audioDevice,NULL); // Create the audio context
     alcMakeContextCurrent(audioContext);
-    errorCode = alcGetError(audioDevice);
+    openal_error("set context");
     inputDevice = alcCaptureOpenDevice(NULL,FREQUENCY,AL_FORMAT_MONO16,BUFFER_SIZE);
-    errorCode = alcGetError(inputDevice);
     alcCaptureStart(inputDevice); // Begin capturing
-    errorCode = alcGetError(inputDevice);
+    openal_error("start capture");
 
     alGenBuffers(BUFFER_COUNT, buffers);
-    check_al_error();
+    openal_error("gen buffers");
 
     alGenSources(1, &source);
-    check_al_error();
+    openal_error("gen sources");
 
     for (int i = 0; i < BUFFER_COUNT; ++i)
     {
@@ -80,31 +93,47 @@ void end_audio()
 }
 
 
+
 int
 timer_audio_cb(const void *pointer, void *data, int remaining_calls)
 {
-    bufferState = NEXT_BUFFER_STATE;
-    weechat_printf(NULL, "doing audio buffer: %d", bufferState);
-    if (buffersActive[bufferState] == 1)
+    int samplesIn = 0;
+    alcGetIntegerv(inputDevice, ALC_CAPTURE_SAMPLES, 1, &samplesIn);
+    if (samplesIn >= BUFFER_SIZE)
     {
-        alSourceUnqueueBuffers(source, 1, &buffers[bufferState]);
-        buffersActive[bufferState] = 0;
+        alcCaptureSamples(inputDevice, buffer, BUFFER_SIZE);
+        openal_error("capture samples");
+        
+        long long volume = 0;
+        for (int i = 0; i < DOUBLE_BUFFER_SIZE; ++i)
+            if (buffer[i] > 0)
+                volume += buffer[i];
+            else
+                volume -= buffer[i];
+
+        bufferState = NEXT_BUFFER_STATE;
+        if (buffersActive[bufferState] == 1)
+        {
+            alSourceUnqueueBuffers(source, 1, &buffers[bufferState]);
+            openal_error("unqueue buffers");
+            buffersActive[bufferState] = 0;
+        }
+
+        alBufferData(buffers[bufferState], AL_FORMAT_MONO16, buffer, BUFFER_SIZE * sizeof(short), FREQUENCY);
+        openal_error("buffer data");
+        alSourceQueueBuffers(source, 1, &buffers[bufferState]);
+        openal_error("queue buffers");
+        buffersActive[bufferState] = 1;
+
+
+        ALint sourceState = 0;
+        alGetSourcei(source, AL_SOURCE_STATE, &sourceState);
+        openal_error("get source state");
+        if (sourceState != AL_PLAYING) {
+            alSourcePlay(source);
+            openal_error("play source");
+        }
     }
-
-    alcCaptureSamples(inputDevice, buffer, BUFFER_SIZE);
-
-    alBufferData(buffers[bufferState], AL_FORMAT_MONO16, buffer, BUFFER_SIZE * sizeof(short), FREQUENCY);
-    alSourceQueueBuffers(source, 1, &buffers[bufferState]);
-    buffersActive[bufferState] = 1;
-
-    ALint sourceState = 0;
-    alGetSourcei(source, AL_SOURCE_STATE, &sourceState);
-    if (sourceState != AL_PLAYING) {
-        alSourcePlay(source);
-    }
-
-    time_t date = time(NULL);
-    weechat_printf(NULL, "date: %d", date);
     return WEECHAT_RC_OK;
 }
 
