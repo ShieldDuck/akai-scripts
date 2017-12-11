@@ -1,5 +1,6 @@
 #include <stdlib.h>
-#include <weechat/weechat-plugin.h>
+#include <stdio.h>
+#include <unistd.h>
 #include <AL/al.h>
 #include <AL/alc.h>
 
@@ -7,17 +8,9 @@
 #define FRAMES_PER_SEC 20
 #define BUFFER_SIZE FREQUENCY/FRAMES_PER_SEC
 #define DOUBLE_BUFFER_SIZE FREQUENCY/FRAMES_PER_SEC*2
-#define BUFFER_COUNT 4
+#define BUFFER_COUNT 16
 #define NEXT_BUFFER_STATE (bufferState + 1) % BUFFER_COUNT
-
-WEECHAT_PLUGIN_NAME("akai-audio");
-WEECHAT_PLUGIN_DESCRIPTION("Audio plugin for Weechat");
-WEECHAT_PLUGIN_AUTHOR("Gavin Stark <gstark31897@gmail.com>");
-WEECHAT_PLUGIN_VERSION("0.1");
-WEECHAT_PLUGIN_LICENSE("GPL3");
-
-struct t_weechat_plugin *weechat_plugin = NULL;
-struct t_hook *weechat_audio_hook = NULL;
+#define STDIN 0
 
 ALCcontext *audioContext = NULL;
 ALCdevice *audioDevice = NULL;
@@ -34,19 +27,19 @@ void openal_error(char *location)
     ALenum error = alGetError();
     if (error == AL_INVALID_NAME)
     {
-        weechat_printf(NULL, "%s: invalid name", location);
+        printf("%s: invalid name\n", location);
     }
     else if (error == AL_INVALID_ENUM)
     {
-        weechat_printf(NULL, "%s: invalid enum", location);
+        printf("%s: invalid enum\n", location);
     }
     else if (error == AL_INVALID_OPERATION)
     {
-        weechat_printf(NULL, "%s: invalid operation", location);
+        printf("%s: invalid operation\n", location);
     }
     else if (error == AL_OUT_OF_MEMORY)
     {
-        weechat_printf(NULL, "%s: out of memory", location);
+        printf("%s: out of memory\n", location);
     }
 }
 
@@ -91,8 +84,7 @@ void end_audio()
 
 
 
-int
-timer_audio_cb(const void *pointer, void *data, int remaining_calls)
+int do_audio()
 {
     int samplesIn = 0;
     alcGetIntegerv(inputDevice, ALC_CAPTURE_SAMPLES, 1, &samplesIn);
@@ -131,58 +123,45 @@ timer_audio_cb(const void *pointer, void *data, int remaining_calls)
             openal_error("play source");
         }
     }
-    return WEECHAT_RC_OK;
+    return 0;
 }
 
-
-int
-command_double_cb (const void *pointer, void *data,
-                   struct t_gui_buffer *buffer,
-                   int argc, char **argv, char **argv_eol)
+void read_input()
 {
-    (void) data;
-    (void) buffer;
-    (void) argv;
-
-    if (argc > 1)
-    {
-        weechat_command (NULL, argv_eol[1]);
-        weechat_command (NULL, argv_eol[1]);
-    }
-
-    return WEECHAT_RC_OK;
+    char buffer[4096];
 }
 
-
-int
-weechat_plugin_init (struct t_weechat_plugin *plugin,
-                     int argc, char *argv[])
+int main(char *argv, int argc)
 {
-    weechat_plugin = plugin;
+    struct timeval delay;
+    delay.tv_sec = 0;
 
-    weechat_hook_command ("akai-audio",
-                          "Display two times a message "
-                          "or execute two times a command",
-                          "message | command",
-                          "message: message to display two times\n"
-                          "command: command to execute two times",
-                          NULL,
-                          &command_double_cb, NULL, NULL);
-
-    weechat_audio_hook = weechat_hook_timer(1000/FRAMES_PER_SEC, 0, 0, &timer_audio_cb, NULL, NULL);
+    fd_set fds;
+    int maxfd = 1;
 
     init_audio();
+    while (1 == 1)
+    {
+        FD_ZERO(&fds);
+        FD_SET(STDIN, &fds);
+        // only set the timeout if we actually timed out
+        if (delay.tv_usec == 0)
+            delay.tv_usec = 1000000/FRAMES_PER_SEC;
+        select(maxfd + 1, &fds, NULL, NULL, &delay);
+        if (FD_ISSET(STDIN, &fds))
+        {
+            printf("reading\n");
+            read_input();
+        }
 
-    return WEECHAT_RC_OK;
-}
-
-int
-weechat_plugin_end (struct t_weechat_plugin *plugin)
-{
-    (void) plugin;
-
+        if (delay.tv_usec == 0)
+        {
+            printf("doing audio\n");
+            if (do_audio() != -1)
+                break;
+        }
+    }
     end_audio();
-
-    return WEECHAT_RC_OK;
+    return 0;
 }
 
